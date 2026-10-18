@@ -72,6 +72,12 @@ Then select a model:
 /model antigravity/gemini-3.1-pro-high
 ```
 
+> **Version note:** this README describes the opencode V2 plugin (`Plugin.define`,
+> its own `antigravity` provider and integration). Earlier releases targeted
+> opencode V1, where the plugin attached to the built-in `google` provider
+> instead (`/model google/gemini-3.1-pro-high`). See
+> [CHANGELOG.md](./CHANGELOG.md) for the V1→V2 migration notes.
+
 ### Requirements
 
 The plugin requires **`agy` >= 1.1.8** (released 2026-06-09). Earlier versions do not implement the `--output-format stream-json` flag that the plugin relies on for NDJSON streaming. The preflight verifies this and surfaces an actionable `AgyNotInstalledError` with upgrade instructions.
@@ -83,20 +89,25 @@ For Google AI Pro / Ultra subscribers, OAuth happens via `agy`'s built-in browse
 ```
 ┌──────────────────┐
 │   opencode TUI   │
-│  (AI SDK v5)     │
 └────────┬─────────┘
-         │ plugin contract
+         │ plugin contract (Plugin.define)
          ▼
 ┌──────────────────────────────────────────┐
 │  antigravity-provider-for-opencode       │
 │                                          │
-│  • locate & preflight agy binary         │
-│  • spawn "agy -p ... --output-format     │
-│    stream-json" via Process.spawn        │
-│  • parse NDJSON → AI SDK stream chunks   │
-│  • strip subscription-only env vars      │
+│  • registers its own "antigravity"       │
+│    provider + integration via            │
+│    ctx.provider / ctx.integration        │
+│  • ctx.aisdk.hook("sdk"/"language")      │
+│    hands opencode a plain LanguageModelV3 │
+│    whose doGenerate/doStream:             │
+│      - locate & preflight agy binary     │
+│      - spawn "agy -p ... --output-format │
+│        stream-json" via Process.spawn    │
+│      - parse NDJSON → AI SDK stream parts │
+│      - strip subscription-only env vars  │
 └────────┬─────────────────────────────────┘
-         │ subprocess (NDJSON stdout)
+         │ subprocess (NDJSON stdout) — no HTTP request is ever made
          ▼
 ┌──────────────────┐
 │  Antigravity CLI │
@@ -107,6 +118,13 @@ For Google AI Pro / Ultra subscribers, OAuth happens via `agy`'s built-in browse
          ▼
      Google backend
 ```
+
+opencode V1 could not register a new provider, so an earlier version of this
+plugin attached to the built-in `google` provider and overrode its `fetch`.
+opencode V2 lets a plugin register its own provider and its own
+`LanguageModelV3` implementation directly (via `ctx.aisdk.hook`), so the
+current version never touches the `google` provider, the AI SDK's `fetch`
+option, or any Generative Language API wire format at all.
 
 ## Acknowledgments
 

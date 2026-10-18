@@ -1,14 +1,16 @@
-// Entry point for the Antigravity provider plugin. The exported
-// default is the plugin factory that opencode's plugin loader
-// invokes when the user activates this plugin via plugin_origins.
-//
-// The shape matches @opencode-ai/plugin's Plugin type: an async
-// function that takes a PluginInput and returns Promised Hooks.
-// The implementation lives in src/auth.ts so this file stays a
-// pure re-export, following the opencode-google-code-assist pattern
-// where the package's main entry is a thin wrapper.
+// Entry point for the Antigravity provider plugin. opencode V2's plugin
+// loader expects a default export built with `Plugin.define({ id, setup })`
+// (see https://opencode.ai/v2/docs/build/plugins). The implementation lives
+// in src/plugin.ts so this file stays a pure re-export.
 
-import { AntigravityProviderPlugin } from "./auth.js"
+import { Plugin } from "@opencode/plugin"
+import { setup } from "./plugin.js"
+import { PROVIDER_ID } from "./constants.js"
 
-export const plugin = AntigravityProviderPlugin
+const AntigravityProviderPlugin = Plugin.define({
+  id: PROVIDER_ID,
+  setup,
+})
+
 export default AntigravityProviderPlugin
+export { AntigravityProviderPlugin }

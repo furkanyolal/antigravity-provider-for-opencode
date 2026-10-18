@@ -26,6 +26,9 @@
     "subscription"
   ],
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "scripts": {
     "typecheck": "bash script/typecheck.sh",
     "test": "bun test",
@@ -34,8 +37,7 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "^3.0.8",
-    "@opencode-ai/plugin": "^1.18.18",
-    "@opencode-ai/sdk": "^1.18.18"
+    "@opencode/plugin": "^2.0.32"
   },
   "devDependencies": {
     "@tsconfig/node22": "22.0.2",

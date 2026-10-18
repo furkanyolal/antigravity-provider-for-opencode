@@ -6,16 +6,16 @@ This plugin is a thin wrapper around the Google `agy` CLI. Its security surface 
 
 ### What the plugin does
 
-1. At startup, `preflight()` runs `agy --version` to verify the binary is present and runnable. It does not spawn any other process.
-2. At every model load, the `auth.loader` callback again runs `preflight()` and the `provider.models` hook returns the 6 Antigravity models.
-3. For every chat request, the `auth.loader`'s `fetch` override spawns `agy -p <prompt> --model <slug> --output-format stream-json` and pipes the NDJSON output back as an SSE response that the AI SDK can consume.
+1. At plugin load, it registers its own `antigravity` provider and `antigravity` integration with opencode (`ctx.provider.transform` / `ctx.integration.transform`) — it does not attach to or modify any other provider.
+2. At connect time, one of the three auth methods runs `preflight()` (and `install()` for the install method) to verify the `agy` binary is present and runnable.
+3. For every chat request, `ctx.aisdk.hook("sdk"/"language", ...)` hands opencode a plain AI-SDK `LanguageModelV3` whose `doGenerate`/`doStream` re-run `preflight()`, then spawn `agy -p <prompt> --model <slug> --output-format stream-json` and translate its NDJSON output directly into AI SDK stream parts.
 
 The `agy` binary itself manages the OAuth session via the OS-native keyring (Apple Keychain / Linux Secret Service / Windows Credential Manager). **The plugin never sees the OAuth refresh token**. It only ever starts a child process and reads the result.
 
 ### What the plugin does NOT do
 
 - It does not read, store, or transmit the OAuth refresh token. The token stays in the OS keyring, managed by `agy`.
-- It does not call any HTTP endpoint directly. The fetch override is a pure local proxy through `agy`.
+- It does not call any HTTP endpoint, ever, for any reason. The model implementation is a plain `LanguageModelV3` whose `doGenerate`/`doStream` spawn `agy` directly — there is no `fetch`, no HTTP client, and no wire format to fake, so there is nothing to intercept or discard.
 - It does not bind any TCP port (no loopback callback server, no localhost HTTP).
 - It does not write to disk outside its own filesystem footprint.
 - It does not silently fall back to a per-token API key path. The subscription-only env strip (below) actively prevents this.
@@ -32,7 +32,7 @@ The `agy` CLI accepts an `ANTIGRAVITY_API_KEY` env var as a paid escape hatch fo
 - `GOOGLE_GENAI_USE_VERTEXAI`
 - `GOOGLE_GENAI_USE_GCA`
 
-To prevent this, the plugin strips every key in the list above from the spawned subprocess environment before every `agy` invocation. This is enforced at the spawn boundary (`src/fetch-wrapper.ts`) so a stray export cannot punch a hole through the cost model.
+To prevent this, the plugin strips every key in the list above from the spawned subprocess environment before every `agy` invocation. This is enforced at the spawn boundary (`src/language-model.ts`'s `runAgy()`) so a stray export cannot punch a hole through the cost model.
 
 The `detectLeakedSubscriptionKeys()` helper in `src/env.ts` is available for callers that want to surface a warning when the parent process env contains any of these keys. The plugin itself does not call this helper (it would block on user cleanup), but it documents the diagnostic so users can audit their environment.
 
@@ -41,11 +41,11 @@ The `detectLeakedSubscriptionKeys()` helper in `src/env.ts` is available for cal
 - **No shell**: the spawn uses `args: [...]` directly, never `shell: true`. No command injection vector.
 - **No env passthrough**: the spawned env is constructed by `subscriptionOnlyEnv()`, which is a fresh clone of `process.env` with the subscription-only keys removed. The `extra` parameter (used only by the install flow) is merged on top.
 - **Timeout**: 5 minutes per spawn (matches the `agy` print-mode default). We use Node's `spawn({ timeout, killSignal: "SIGKILL" })` so the timeout fires even if `agy` traps SIGTERM.
-- **AbortSignal propagation**: if the user cancels mid-request (Ctrl+C in opencode), the AI SDK's AbortSignal is passed to `spawn()` as the `signal` option (Node's documented pattern). Node sends SIGTERM to the child on abort. The `ReadableStream`'s `cancel()` handler also kills the child so consumer-driven cancellation (via `response.body.cancel()`) is independent of the SDK's signal path.
+- **AbortSignal propagation**: if the user cancels mid-request (Ctrl+C in opencode), the AI SDK's `abortSignal` call option is passed to `spawn()` as the `signal` option (Node's documented pattern). Node sends SIGTERM to the child on abort. The `doStream()` `ReadableStream`'s `cancel()` handler also kills the child, so consumer-driven cancellation (e.g. the stream's reader cancelling it) is independent of the abort-signal path.
 
 ## OAuth storage
 
-The `opencode.json` `auth.json` entry for the antigravity provider is a **marker** — it does not contain the refresh token. The actual OAuth state lives in:
+The credential opencode persists for the `antigravity` integration (`refresh`/`access`/`expires`) is a **marker** — it does not contain the real OAuth refresh token. The actual OAuth state lives in:
 - macOS: `~/Library/Keychains/login.keychain`, item type generic-password, service `Antigravity Safe Storage`
 - Linux: Secret Service / dbus
 - Windows: Windows Credential Manager

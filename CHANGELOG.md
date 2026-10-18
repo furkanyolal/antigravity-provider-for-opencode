@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Ported from opencode V1 to V2's plugin API.** The entry point now uses
+  `@opencode/plugin`'s `Plugin.define({ id, setup })` shape instead of the
+  V1 default-export hooks function.
+  - `src/auth.ts` → `src/plugin.ts`: the V1 `auth.methods`/`auth.loader`/
+    `provider.models` hooks are replaced by `ctx.integration.transform`
+    (the 3 connect methods, as `type: "oauth"` methods with an
+    `authorize()` that returns a `mode: "auto"` `Credential.OAuth`
+    placeholder) and `ctx.provider.transform` (a first-class `antigravity`
+    provider — V1 had to attach to the built-in `google` provider because
+    it could not register a new one).
+  - `src/fetch-wrapper.ts` → `src/language-model.ts`: V1's `auth.loader`
+    fetch override (which faked the Google Generative Language API's SSE
+    wire format so the `@ai-sdk/google` package would accept agy's output)
+    is replaced by a plain AI-SDK-v3 `LanguageModelV3` whose
+    `doGenerate`/`doStream` spawn `agy` directly and emit native
+    `LanguageModelV3StreamPart`s. It is wired in via
+    `ctx.aisdk.hook("sdk"/"language", ...)`, scoped to the `antigravity`
+    provider — **no HTTP request of any kind is made**, not even one whose
+    response gets discarded. (`ctx.session.hook("http.request"/
+    "http.response")` was considered and rejected: per opencode's own
+    `model-request.ts`, that hook pair always dispatches a real `handler()`
+    call before letting a plugin replace the response, which would have
+    meant a live, credential-stripped request reaching Google's endpoint
+    on every call — a regression against this file's "does not call any
+    HTTP endpoint directly" guarantee.)
+  - `src/models.ts`: `toModelV2Map`/the flat `ModelEntry` shape are
+    replaced by `toModelInfoList()`, producing `@opencode/schema/model`'s
+    `Model.Info[]` directly. Models no longer declare an explicit `$0`
+    cost tier (`cost: []`) since V2's `Model.Cost.input`/`output` are
+    branded `Money.USDPerMillionTokens` values with no natural `0` without
+    adding `@opencode/schema` as a direct dependency just for that; an
+    empty cost array is the more honest "not per-token billed" shape.
+  - `src/cli.ts`, `src/install.ts`, `src/spawn.ts`, `src/env.ts`,
+    `src/errors.ts`, `src/constants.ts` are unchanged — they only ever
+    talked to the `agy` subprocess and have no opencode-API-version
+    dependency.
+  - Package: `@opencode-ai/plugin`/`@opencode-ai/sdk` replaced by
+    `@opencode/plugin`. `@ai-sdk/provider` is unchanged (its `3.x` line
+    already ships the `LanguageModelV3` types `@opencode/plugin@2.x`
+    itself depends on).
+  - `index.ts` (repo root) + `package.json`'s new `exports` field: opencode
+    resolves a *local, unnamed* plugin directory (a bare path or `file://`
+    config entry, as opposed to an installed, named npm package) to
+    `<directory>/index`, bypassing `package.json`'s `main`/`exports`
+    entirely for that resolution path. `index.ts` re-exports `src/index.ts`
+    so the plugin loads correctly both as a local directory and as an
+    installed package.
+  - `src/ai-sdk-factory.ts`: `AI_SDK_PACKAGE` (in `src/plugin.ts`, computed
+    from `import.meta.url`) points at this real, importable factory module
+    instead of a symbolic placeholder string. opencode's built-in
+    `opencode.provider.dynamic` plugin registers an *unscoped*
+    `ctx.aisdk.hook("sdk", ...)` that unconditionally tries to import
+    *any* `aisdk:`-prefixed provider package and dies — aborting every
+    plugin's hooks sharing that event chain, not just its own — if the
+    import fails, so the package string must resolve to a real module.
+    This factory's `languageModel()` is a fallback; the actual model
+    opencode uses comes from `src/plugin.ts`'s own `ctx.aisdk.hook`
+    (`"language"`), which can also check the live integration connection.
+  - `src/model-discovery.ts` (new) + `src/plugin.ts`: the model catalog is
+    now discovered live via `agy models` (refreshed every 5 minutes, with
+    `ctx.provider.reload()`), not a hardcoded snapshot. `src/models.ts`'s
+    `MODEL_DEFS` is kept as curated metadata for known slugs and as the
+    pre-connect fallback catalog (before `agy` is installed/authenticated,
+    `agy models` can't run yet); `inferModelDef` gives any slug Google
+    ships after this list was last updated reasonable default capabilities
+    by family-prefix heuristics instead of failing to register it at all.
+    This was prompted by a real failure: a model shipped with this plugin
+    (`gemini-3.6-flash-high` etc.) stopped matching the slugs a newer
+    `agy` release actually accepts, so every chat turn against it failed
+    with agy's own "model not recognized" error.
+  - `src/language-model.ts`: `agy` is itself a full agentic CLI with its
+    own tool system (`run_command`, `write_to_file`, browser control, ...),
+    separate from opencode's. In headless `-p` mode it cannot show a
+    permission prompt, so whenever the underlying model decides to use one
+    of *agy's own* tools, agy auto-denies the action and reports
+    `status: "SUCCESS"` with an empty `response` — i.e. the turn silently
+    "succeeds" with nothing to show the user. `responseText()` now
+    surfaces agy's `denied_actions` as an explanatory message instead of
+    blank text. (Deliberately not fixed by adding `agy`'s own
+    `--dangerously-skip-permissions`: that would let the model execute
+    arbitrary commands/file writes unsupervised on every turn, which is a
+    security-posture change this plugin should not make unilaterally.)
+  - Manually verified end-to-end against a running opencode V2 instance:
+    the plugin loads, `antigravity/*` models appear in `/models` once
+    connected, and a chat turn against `antigravity/gpt-oss-120b-medium`
+    streams a real response through `agy`. The plugin's own hardcoded
+    model catalog (`src/models.ts`) is the one documented in README.md
+    and matches the slugs this port is scoped to preserve from V1; a
+    currently-installed `agy` build may report a different, newer catalog
+    (observed during manual testing: `agy models` returned slugs like
+    `gemini-4-argon-medium` and `claude-opus-5-5-high` instead of this
+    plugin's `gemini-3.6-flash-high`/`claude-opus-4-6`). That drift is
+    pre-existing upstream catalog churn, not something this port
+    introduced or is scoped to chase.
+
 ### Fixed
 - **NDJSON trailing partial line drop** — `agy` 1.1.x sometimes emits the final
   `result` event without a trailing newline. The stream parser now flushes
