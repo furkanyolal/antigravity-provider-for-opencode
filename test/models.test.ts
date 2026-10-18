@@ -1,136 +1,115 @@
 import { describe, expect, it } from "bun:test"
+import { Provider } from "@opencode/plugin"
 import { PROVIDER_ID } from "../src/constants.js"
-import { MODEL_BY_SLUG, IMAGE_MODALITY, TEXT_MODALITY, toModelV2Map } from "../src/models.js"
-import type { ModelSlug } from "../src/types.js"
+import { MODEL_DEFS, MODEL_SLUGS, AI_SDK_PACKAGE, toModelInfoList } from "../src/models.js"
 
-const ALL_SLUGS = Object.keys(MODEL_BY_SLUG) as ModelSlug[]
+const providerID = Provider.ID.make(PROVIDER_ID)
 
-describe("MODEL_BY_SLUG", () => {
+describe("MODEL_DEFS", () => {
   it("contains exactly 7 models", () => {
-    expect(ALL_SLUGS).toHaveLength(7)
+    expect(MODEL_DEFS).toHaveLength(7)
+    expect(MODEL_SLUGS).toHaveLength(7)
   })
 
-  it.each(ALL_SLUGS)("%s has id matching its key", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    expect(model.id).toBe(slug)
-  })
-
-  it.each(ALL_SLUGS)("%s has providerID = 'antigravity'", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    expect(model.providerID).toBe(PROVIDER_ID)
-  })
-
-  it.each(ALL_SLUGS)("%s has api.npm pointing to a BUNDLED_PROVIDERS entry", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    // The plugin attaches to the @ai-sdk/google SDK and overrides its
-    // fetch. The api.npm field MUST match a BUNDLED_PROVIDERS key or
-    // opencode's model initializer falls through to Npm.add(), which
-    // fails for non-existent packages and throws InitError.
-    expect(model.api.npm).toBe("@ai-sdk/google")
-  })
-
-  it.each(ALL_SLUGS)("%s has cost = 0 (subscription-billed)", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    expect(model.cost.input).toBe(0)
-    expect(model.cost.output).toBe(0)
-    expect(model.cost.cache.read).toBe(0)
-    expect(model.cost.cache.write).toBe(0)
-  })
-
-  it.each(ALL_SLUGS)("%s has status = 'active'", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    expect(model.status).toBe("active")
-  })
-
-  it.each(ALL_SLUGS)("%s has non-empty name and family", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    expect(model.name.length).toBeGreaterThan(0)
-    expect(model.family.length).toBeGreaterThan(0)
-  })
-
-  it.each(ALL_SLUGS)("%s has limit.context > 0 and limit.output > 0", (slug) => {
-    const model = MODEL_BY_SLUG[slug]
-    expect(model.limit.context).toBeGreaterThan(0)
-    expect(model.limit.output).toBeGreaterThan(0)
-  })
-
-  it("reasoning flag matches the family expectation", () => {
-    // All Antigravity models expose reasoning=true on the wire (per the
-    // /docs/models table — every reasoning model the UI exposes ships
-    // with thinking on).
-    for (const slug of ALL_SLUGS) {
-      expect(MODEL_BY_SLUG[slug].capabilities.reasoning).toBe(true)
+  it("every model has a non-empty name, family, and positive limits", () => {
+    for (const def of MODEL_DEFS) {
+      expect(def.name.length).toBeGreaterThan(0)
+      expect(def.family.length).toBeGreaterThan(0)
+      expect(def.contextLimit).toBeGreaterThan(0)
+      expect(def.outputLimit).toBeGreaterThan(0)
     }
   })
 
+  it("reasoning is true for every model (slug names already encode the level)", () => {
+    for (const def of MODEL_DEFS) expect(def.reasoning).toBe(true)
+  })
+
   it("Gemini and Claude families accept image input", () => {
-    for (const slug of ALL_SLUGS) {
-      const cap = MODEL_BY_SLUG[slug].capabilities
-      if (slug.startsWith("gemini-") || slug.startsWith("claude-")) {
-        expect(cap.attachment).toBe(true)
-        expect(cap.input.image).toBe(true)
+    for (const def of MODEL_DEFS) {
+      if (def.slug.startsWith("gemini-") || def.slug.startsWith("claude-")) {
+        expect(def.acceptsImages).toBe(true)
       }
     }
   })
 
   it("GPT-OSS does not declare image attachment (text-only)", () => {
-    const gpt = MODEL_BY_SLUG["gpt-oss-120b-medium"]
-    expect(gpt.capabilities.attachment).toBe(false)
-    expect(gpt.capabilities.input.image).toBe(false)
-    expect(gpt.capabilities.input).toEqual(TEXT_MODALITY)
+    const gpt = MODEL_DEFS.find((def) => def.slug === "gpt-oss-120b-medium")!
+    expect(gpt.acceptsImages).toBe(false)
+    expect(gpt.toolcall).toBe(false)
   })
 
   it("claude models have 200k context window", () => {
-    expect(MODEL_BY_SLUG["claude-sonnet-4-6"].limit.context).toBe(200_000)
-    expect(MODEL_BY_SLUG["claude-opus-4-6"].limit.context).toBe(200_000)
+    expect(MODEL_DEFS.find((d) => d.slug === "claude-sonnet-4-6")!.contextLimit).toBe(200_000)
+    expect(MODEL_DEFS.find((d) => d.slug === "claude-opus-4-6")!.contextLimit).toBe(200_000)
   })
 
   it("gemini-3.6-flash and 3.5-flash share the gemini-flash family", () => {
-    expect(MODEL_BY_SLUG["gemini-3.6-flash-high"].family).toBe("gemini-flash")
-    expect(MODEL_BY_SLUG["gemini-3.6-flash-medium"].family).toBe("gemini-flash")
-    expect(MODEL_BY_SLUG["gemini-3.5-flash-medium"].family).toBe("gemini-flash")
+    expect(MODEL_DEFS.find((d) => d.slug === "gemini-3.6-flash-high")!.family).toBe("gemini-flash")
+    expect(MODEL_DEFS.find((d) => d.slug === "gemini-3.6-flash-medium")!.family).toBe("gemini-flash")
+    expect(MODEL_DEFS.find((d) => d.slug === "gemini-3.5-flash-medium")!.family).toBe("gemini-flash")
   })
 
   it("claude-sonnet and claude-opus have distinct families", () => {
-    expect(MODEL_BY_SLUG["claude-sonnet-4-6"].family).toBe("claude-sonnet")
-    expect(MODEL_BY_SLUG["claude-opus-4-6"].family).toBe("claude-opus")
-  })
-
-  it("modality constants are immutable singleton shapes", () => {
-    expect(IMAGE_MODALITY).toEqual({ text: true, audio: false, image: true, video: false, pdf: false })
-    expect(TEXT_MODALITY).toEqual({ text: true, audio: false, image: false, video: false, pdf: false })
+    expect(MODEL_DEFS.find((d) => d.slug === "claude-sonnet-4-6")!.family).toBe("claude-sonnet")
+    expect(MODEL_DEFS.find((d) => d.slug === "claude-opus-4-6")!.family).toBe("claude-opus")
   })
 })
 
-describe("toModelV2Map (ASNEVER-001)", () => {
-  it("produces an entry for every ModelSlug with the same id key", () => {
-    const out = toModelV2Map(MODEL_BY_SLUG)
-    expect(Object.keys(out).toSorted()).toEqual(Object.keys(MODEL_BY_SLUG).toSorted())
+describe("toModelInfoList", () => {
+  const models = toModelInfoList(providerID)
+
+  it("produces one Model.Info per ModelSlug with matching id", () => {
+    expect(models).toHaveLength(MODEL_DEFS.length)
+    const ids = models.map((m) => String(m.id)).toSorted()
+    const slugs = [...MODEL_SLUGS].toSorted()
+    expect(ids).toEqual(slugs)
   })
 
-  it("preserves id, name, family, status, release_date from ModelEntry", () => {
-    const entry = MODEL_BY_SLUG["gemini-3.1-pro-high"]
-    const out = toModelV2Map(MODEL_BY_SLUG)
-    const mapped = out["gemini-3.1-pro-high"]!
-    expect(mapped.id).toBe(entry.id)
-    expect(mapped.name).toBe(entry.name)
-    expect(mapped.family).toBe(entry.family)
-    expect(mapped.status).toBe(entry.status)
-    expect(mapped.release_date).toBe(entry.release_date)
+  it("stamps the antigravity providerID on every model", () => {
+    for (const model of models) expect(model.providerID).toBe(providerID)
   })
 
-  it("preserves the api.url pointing at @ai-sdk/google BUNDLED_PROVIDERS", () => {
-    const out = toModelV2Map(MODEL_BY_SLUG)
-    for (const model of Object.values(out)) {
-      expect(model.api.npm).toBe("@ai-sdk/google")
-    }
+  it("preserves name, family, status, and release time from ModelDef", () => {
+    const def = MODEL_DEFS.find((d) => d.slug === "gemini-3.1-pro-high")!
+    const mapped = models.find((m) => String(m.id) === def.slug)!
+    expect(mapped.name).toBe(def.name)
+    expect(String(mapped.family)).toBe(def.family)
+    expect(mapped.status).toBe("active")
+    expect(mapped.time.released).toBe(Date.parse(def.releaseDate))
   })
 
-  it("keeps cost = 0 (subscription billing)", () => {
-    const out = toModelV2Map(MODEL_BY_SLUG)
-    for (const model of Object.values(out)) {
-      expect(model.cost.input).toBe(0)
-      expect(model.cost.output).toBe(0)
-    }
+  it("declares no cost tiers (subscription-billed, not per-token)", () => {
+    for (const model of models) expect(model.cost).toEqual([])
+  })
+
+  it("enables every model", () => {
+    for (const model of models) expect(model.enabled).toBe(true)
+  })
+
+  it("maps capabilities.input to text+image or text-only per acceptsImages", () => {
+    const imageModel = models.find((m) => String(m.id) === "gemini-3.1-pro-high")!
+    const textOnly = models.find((m) => String(m.id) === "gpt-oss-120b-medium")!
+    expect(imageModel.capabilities.input).toEqual(["text", "image"])
+    expect(textOnly.capabilities.input).toEqual(["text"])
+  })
+
+  it("maps toolcall to capabilities.tools", () => {
+    const gpt = models.find((m) => String(m.id) === "gpt-oss-120b-medium")!
+    const gemini = models.find((m) => String(m.id) === "gemini-3.1-pro-high")!
+    expect(gpt.capabilities.tools).toBe(false)
+    expect(gemini.capabilities.tools).toBe(true)
+  })
+
+  it("carries limit.context and limit.output from ModelDef", () => {
+    const def = MODEL_DEFS.find((d) => d.slug === "claude-opus-4-6")!
+    const mapped = models.find((m) => String(m.id) === def.slug)!
+    expect(mapped.limit.context).toBe(def.contextLimit)
+    expect(mapped.limit.output).toBe(def.outputLimit)
+  })
+})
+
+describe("AI_SDK_PACKAGE", () => {
+  it("is an aisdk:-prefixed symbolic specifier, never a resolvable module path", () => {
+    expect(AI_SDK_PACKAGE.startsWith("aisdk:")).toBe(true)
   })
 })

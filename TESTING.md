@@ -138,10 +138,10 @@ Then in `~/.config/opencode/config.json`:
 5 minutes. Run `/connect antigravity` again.
 
 **"Failed to load module: Cannot find module"** — the plugin's `package.json`
-declares `@opencode-ai/core` and `@opencode-ai/plugin` as dependencies. If
-you `npm install -g` outside the workspace, make sure opencode is on the
-`npm install -g` path so it can resolve the workspace peer dependency. Inside
-the fork's monorepo, this is automatic.
+declares `@opencode/plugin` and `@ai-sdk/provider` as dependencies. Make sure
+`bun install` (or `npm install`) ran in the plugin's own directory before
+pointing opencode at it; a plugin loaded from a bare file path does not get
+its `node_modules` installed automatically.
 
 **"GEMINI_API_KEY is set; consider unsetting it"** — the AI SDK checks for
 env vars in priority order. The plugin only takes over the `google` provider

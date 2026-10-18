@@ -62,13 +62,18 @@ npm install -g antigravity-provider-for-opencode
 
 ## 3. Register the plugin with opencode
 
-Edit `~/.config/opencode/opencode.json` (or `<project>/.opencode/config.json` for project-scoped):
+> This is the opencode V2 config shape (`"plugins"`). Earlier versions of
+> this plugin targeted opencode V1, which used `"plugin_origins"` instead —
+> if your opencode is still on V1, use that key with the same path/package
+> value.
+
+Edit `~/.config/opencode/opencode.jsonc` (or `<project>/.opencode/opencode.jsonc` for project-scoped):
 
 ```jsonc
 {
-  "plugin_origins": [
+  "plugins": [
     // For Option A / B — point at the cloned directory:
-    "/Users/kasnyiklaszlo/Documents/_OPENCODE/antigravity-provider-for-opencode"
+    "/absolute/path/to/antigravity-provider-for-opencode"
     // For Option C — use the npm name:
     // "antigravity-provider-for-opencode"
   ]
@@ -97,7 +102,7 @@ In the opencode TUI:
 → Use existing Antigravity session
 ```
 
-The plugin verifies that `agy` is installed, parses the version (must be `>= 1.1.8`), and persists a marker to `~/.local/share/opencode/auth.json` under the `google` provider. No browser interaction is required at this step — the OAuth session lives in the OS keyring.
+The plugin verifies that `agy` is installed, parses the version (must be `>= 1.1.8`), and persists a marker credential under its own `antigravity` integration. No browser interaction is required at this step — the OAuth session lives in the OS keyring.
 
 > If the connect fails with "Antigravity CLI is not installed", run `agy -p "test"` in a terminal first to verify the install.
 
@@ -137,10 +142,6 @@ Now send a message:
 # Make a direct test call (no opencode required):
 agy -p "what is 2+2?"
 # Should return: "4" (or similar) without re-prompting
-
-# Check the auth marker:
-cat ~/.local/share/opencode/auth.json | head -20
-# Should show: "google": { "type": "oauth", "access": "antigravity-managed", ... }
 
 # Check process telemetry:
 ps aux | grep agy   # should show one running process while a request is in flight

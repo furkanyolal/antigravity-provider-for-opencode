@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Ported from opencode V1 to V2's plugin API.** The entry point now uses
+  `@opencode/plugin`'s `Plugin.define({ id, setup })` shape instead of the
+  V1 default-export hooks function.
+  - `src/auth.ts` → `src/plugin.ts`: the V1 `auth.methods`/`auth.loader`/
+    `provider.models` hooks are replaced by `ctx.integration.transform`
+    (the 3 connect methods, as `type: "oauth"` methods with an
+    `authorize()` that returns a `mode: "auto"` `Credential.OAuth`
+    placeholder) and `ctx.provider.transform` (a first-class `antigravity`
+    provider — V1 had to attach to the built-in `google` provider because
+    it could not register a new one).
+  - `src/fetch-wrapper.ts` → `src/language-model.ts`: V1's `auth.loader`
+    fetch override (which faked the Google Generative Language API's SSE
+    wire format so the `@ai-sdk/google` package would accept agy's output)
+    is replaced by a plain AI-SDK-v3 `LanguageModelV3` whose
+    `doGenerate`/`doStream` spawn `agy` directly and emit native
+    `LanguageModelV3StreamPart`s. It is wired in via
+    `ctx.aisdk.hook("sdk"/"language", ...)`, scoped to the `antigravity`
+    provider — **no HTTP request of any kind is made**, not even one whose
+    response gets discarded. (`ctx.session.hook("http.request"/
+    "http.response")` was considered and rejected: per opencode's own
+    `model-request.ts`, that hook pair always dispatches a real `handler()`
+    call before letting a plugin replace the response, which would have
+    meant a live, credential-stripped request reaching Google's endpoint
+    on every call — a regression against this file's "does not call any
+    HTTP endpoint directly" guarantee.)
+  - `src/models.ts`: `toModelV2Map`/the flat `ModelEntry` shape are
+    replaced by `toModelInfoList()`, producing `@opencode/schema/model`'s
+    `Model.Info[]` directly. Models no longer declare an explicit `$0`
+    cost tier (`cost: []`) since V2's `Model.Cost.input`/`output` are
+    branded `Money.USDPerMillionTokens` values with no natural `0` without
+    adding `@opencode/schema` as a direct dependency just for that; an
+    empty cost array is the more honest "not per-token billed" shape.
+  - `src/cli.ts`, `src/install.ts`, `src/spawn.ts`, `src/env.ts`,
+    `src/errors.ts`, `src/constants.ts` are unchanged — they only ever
+    talked to the `agy` subprocess and have no opencode-API-version
+    dependency.
+  - Package: `@opencode-ai/plugin`/`@opencode-ai/sdk` replaced by
+    `@opencode/plugin`. `@ai-sdk/provider` is unchanged (its `3.x` line
+    already ships the `LanguageModelV3` types `@opencode/plugin@2.x`
+    itself depends on).
+
 ### Fixed
 - **NDJSON trailing partial line drop** — `agy` 1.1.x sometimes emits the final
   `result` event without a trailing newline. The stream parser now flushes
