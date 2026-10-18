@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Provider } from "@opencode/plugin"
 import { PROVIDER_ID } from "../src/constants.js"
-import { MODEL_DEFS, MODEL_SLUGS, toModelInfoList } from "../src/models.js"
+import { MODEL_DEFS, MODEL_SLUGS, inferModelDef, toModelInfoList, toModelInfoListFromDiscovered } from "../src/models.js"
 
 const providerID = Provider.ID.make(PROVIDER_ID)
 
@@ -75,7 +75,7 @@ describe("toModelInfoList", () => {
     expect(mapped.name).toBe(def.name)
     expect(String(mapped.family)).toBe(def.family)
     expect(mapped.status).toBe("active")
-    expect(mapped.time.released).toBe(Date.parse(def.releaseDate))
+    expect(mapped.time.released).toBe(Date.parse(def.releaseDate!))
   })
 
   it("declares no cost tiers (subscription-billed, not per-token)", () => {
@@ -105,6 +105,49 @@ describe("toModelInfoList", () => {
     const mapped = models.find((m) => String(m.id) === def.slug)!
     expect(mapped.limit.context).toBe(def.contextLimit)
     expect(mapped.limit.output).toBe(def.outputLimit)
+  })
+})
+
+describe("inferModelDef", () => {
+  it("returns the curated MODEL_DEFS entry verbatim when the slug is known", () => {
+    const def = inferModelDef({ slug: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" })
+    expect(def).toBe(MODEL_DEFS.find((d) => d.slug === "gpt-oss-120b-medium")!)
+  })
+
+  it("infers sensible capabilities for a never-seen Claude slug", () => {
+    const def = inferModelDef({ slug: "claude-sonnet-5-5-high", name: "Claude Sonnet 5.5 (High)" })
+    expect(def.name).toBe("Claude Sonnet 5.5 (High)")
+    expect(def.toolcall).toBe(true)
+    expect(def.acceptsImages).toBe(true)
+    expect(def.contextLimit).toBe(200_000)
+  })
+
+  it("infers sensible capabilities for a never-seen Gemini slug", () => {
+    const def = inferModelDef({ slug: "gemini-4-argon-medium", name: "Gemini 4 Argon (Medium)" })
+    expect(def.toolcall).toBe(true)
+    expect(def.acceptsImages).toBe(true)
+    expect(def.contextLimit).toBe(1_000_000)
+    expect(def.outputLimit).toBe(65_536)
+  })
+
+  it("infers no tools and no images for a gpt-oss slug not already known", () => {
+    const def = inferModelDef({ slug: "gpt-oss-20b-low", name: "GPT-OSS 20B (Low)" })
+    expect(def.toolcall).toBe(false)
+    expect(def.acceptsImages).toBe(false)
+    expect(def.contextLimit).toBe(128_000)
+  })
+})
+
+describe("toModelInfoListFromDiscovered", () => {
+  it("builds one Model.Info per discovered slug, mixing known and inferred metadata", () => {
+    const discovered = [
+      { slug: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
+      { slug: "gemini-4-argon-high", name: "Gemini 4 Argon (High)" },
+    ]
+    const models = toModelInfoListFromDiscovered(discovered, providerID)
+    expect(models).toHaveLength(2)
+    expect(models.map((m) => String(m.id))).toEqual(["gpt-oss-120b-medium", "gemini-4-argon-high"])
+    for (const model of models) expect(model.providerID).toBe(providerID)
   })
 })
 

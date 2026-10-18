@@ -38,14 +38,40 @@ export type AgyEvent =
   | { event: "init"; conversation_id: string }
   | {
       event: "step_update"
-      step_update: { state: string; text_delta?: string; usage?: AgyUsage }
+      step_update: { state: string; step_type?: string; text_delta?: string; usage?: AgyUsage }
     }
   | {
       event: "result"
-      result: { status: string; response?: string; error?: string; usage?: AgyUsage }
+      result: {
+        status: string
+        response?: string
+        error?: string
+        usage?: AgyUsage
+        denied_actions?: { action: string; display_name?: string }[]
+      }
     }
 
 export type AgyResult = Extract<AgyEvent, { event: "result" }>["result"]
+
+// `agy` is itself a full agentic CLI with its own tool system (run_command,
+// write_to_file, browser control, ...), entirely separate from opencode's.
+// In headless `-p` mode it cannot show a permission prompt, so whenever the
+// underlying model decides to use one of *agy's own* tools, agy
+// auto-denies the action and reports `status: "SUCCESS"` with an empty
+// `response` and a populated `denied_actions` — i.e. the turn "succeeds"
+// with nothing to show. Returning that emptiness as-is looks to the user
+// like the plugin silently failed to respond; surface it instead.
+function responseText(result: AgyResult): string {
+  const text = result.response?.trim() ?? ""
+  if (text.length > 0 || !result.denied_actions || result.denied_actions.length === 0) return text
+  const actions = result.denied_actions.map((a) => a.display_name ?? a.action).join(", ")
+  return (
+    `[Antigravity CLI produced no text response. The model tried to use its own tool support ` +
+    `(${actions}), which needs interactive permission approval that this headless integration cannot grant. ` +
+    `Try rephrasing the request so it doesn't need file, command, or browser access, or run \`agy\` directly ` +
+    `in a terminal for that kind of task.]`
+  )
+}
 
 function isAgyEvent(value: unknown): value is AgyEvent {
   if (!value || typeof value !== "object") return false
@@ -85,11 +111,18 @@ export type RunAgyOptions = {
 }
 
 // Spawns `agy -p <prompt> --model <slug> --output-format stream-json` and
-// returns its terminal `result` event. We intentionally do NOT surface
+// returns its terminal `result` event. We intentionally do NOT *stream*
 // `step_update` text_delta as partial output: thinking models split their
 // response across a thinking step and an answer step, and the DONE-state
-// text_delta of the answer step can be partial or out-of-order. The
-// authoritative full text is always `result.response`.
+// text_delta of the answer step can be partial or out-of-order while
+// `result.response` is still being assembled. `result.response` is
+// authoritative when present — but has been observed (on `agy` builds
+// newer than the NDJSON sample this plugin was first written against) to
+// come back empty on an otherwise-successful run, with real output and
+// reasoning token counts, for the exact same model/prompt that returns a
+// populated `result.response` moments later. When that happens, the
+// concatenated non-thinking `step_update` deltas are the only place the
+// actual answer text exists, so they are accumulated as a fallback.
 export async function runAgy(opts: RunAgyOptions): Promise<AgyResult> {
   const child = (opts.spawnFn ?? defaultSpawn)(
     opts.binary,
@@ -112,7 +145,11 @@ export async function runAgy(opts: RunAgyOptions): Promise<AgyResult> {
   if (!child.stdout) throw new AgyParseError("", "agy produced no stdout stream")
 
   let buffer = ""
+  let fallbackText = ""
   const decoder = new TextDecoder()
+  const withFallback = (result: AgyResult): AgyResult =>
+    !result.response && fallbackText.length > 0 ? { ...result, response: fallbackText } : result
+
   for await (const chunk of child.stdout) {
     const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true })
     buffer += text
@@ -130,7 +167,14 @@ export async function runAgy(opts: RunAgyOptions): Promise<AgyResult> {
         throw new AgyParseError(line, `agy emitted non-JSON line: ${line.slice(0, 120)}`)
       }
       if (!isAgyEvent(parsed)) continue
-      if (parsed.event === "result") return parsed.result
+      if (parsed.event === "step_update") {
+        const step = parsed.step_update
+        if (step.state === "DONE" && step.step_type !== "thinking" && typeof step.text_delta === "string") {
+          fallbackText += step.text_delta
+        }
+        continue
+      }
+      if (parsed.event === "result") return withFallback(parsed.result)
     }
   }
 
@@ -141,7 +185,7 @@ export async function runAgy(opts: RunAgyOptions): Promise<AgyResult> {
     const tail = buffer.trim()
     try {
       const parsed = JSON.parse(tail)
-      if (isAgyEvent(parsed) && parsed.event === "result") return parsed.result
+      if (isAgyEvent(parsed) && parsed.event === "result") return withFallback(parsed.result)
     } catch {
       // fall through to the exit-code error below
     }
@@ -237,7 +281,7 @@ export function createAntigravityLanguageModel(opts: CreateLanguageModelOptions)
       })
       if (result.status !== "SUCCESS") throw resultError(result)
       return {
-        content: [{ type: "text", text: result.response ?? "" }],
+        content: [{ type: "text", text: responseText(result) }],
         finishReason: { unified: "stop", raw: "STOP" },
         usage: toUsage(result.usage),
         warnings: [],
@@ -270,7 +314,7 @@ export function createAntigravityLanguageModel(opts: CreateLanguageModelOptions)
             }
             const id = "0"
             controller.enqueue({ type: "text-start", id })
-            controller.enqueue({ type: "text-delta", id, delta: result.response ?? "" })
+            controller.enqueue({ type: "text-delta", id, delta: responseText(result) })
             controller.enqueue({ type: "text-end", id })
             controller.enqueue({
               type: "finish",

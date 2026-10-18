@@ -1,16 +1,12 @@
 // Lightweight domain types for the plugin. The opencode V2 model/provider
 // shapes (`Model.Info`, `Provider.Info`) come straight from `@opencode/plugin`
 // (re-exported `@opencode/schema`); this file only holds the plugin's own
-// model-slug union and the flat domain data used to build those V2 records.
-
-export type ModelSlug =
-  | "gemini-3.6-flash-high"
-  | "gemini-3.6-flash-medium"
-  | "gemini-3.5-flash-medium"
-  | "gemini-3.1-pro-high"
-  | "claude-sonnet-4-6"
-  | "claude-opus-4-6"
-  | "gpt-oss-120b-medium"
+// domain data used to build those V2 records.
+//
+// The slug space is whatever the installed `agy` reports via `agy models`
+// (see model-discovery.ts) — Google adds/renames/retires model generations
+// over time, so this is a plain string, not a fixed literal union.
+export type ModelSlug = string
 
 export type ModelDef = {
   slug: ModelSlug
@@ -22,6 +18,6 @@ export type ModelDef = {
   acceptsImages: boolean
   contextLimit: number
   outputLimit: number
-  /** ISO date (YYYY-MM-DD) the model became available. */
-  releaseDate: string
+  /** ISO date (YYYY-MM-DD) the model became available, when known. */
+  releaseDate?: string
 }

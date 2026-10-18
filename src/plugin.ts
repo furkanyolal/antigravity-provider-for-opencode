@@ -3,8 +3,11 @@
 //   1. An "antigravity" integration with three connect methods ("Install
 //      Antigravity CLI", "Sign in with Google", "Use existing Antigravity
 //      session") — the V2 replacement for V1's `auth.methods`.
-//   2. An "antigravity" provider carrying the 6 Antigravity models,
-//      gated on that integration having an active connection
+//   2. An "antigravity" provider carrying the Antigravity models reported
+//      live by `agy models` (model-discovery.ts), refreshed periodically
+//      so a model rename/retirement doesn't need a plugin restart, with
+//      the static MODEL_DEFS catalog (models.ts) as the pre-connect
+//      fallback — gated on the integration having an active connection
 //      (`activation: "auto"` + `integrationID`) — the V2 replacement for
 //      V1's `provider.models` hook. Its `package` points (via a `file://`
 //      URL resolved from this module's own location, so it works whether
@@ -36,9 +39,15 @@ import { Credential, Integration, Provider } from "@opencode/plugin"
 import { preflight } from "./cli.js"
 import { install, installInstructionsForPlatform } from "./install.js"
 import { createAntigravityLanguageModel } from "./language-model.js"
-import { toModelInfoList } from "./models.js"
+import { discoverModels } from "./model-discovery.js"
+import { toModelInfoList, toModelInfoListFromDiscovered } from "./models.js"
 import { AgyAuthMissingError, AgyNotInstalledError } from "./errors.js"
 import { PROVIDER_ID, PROVIDER_NAME } from "./constants.js"
+
+// How often to re-run `agy models` after the catalog is already live.
+// Frequent enough to notice a model rename/retirement without a plugin
+// restart; infrequent enough not to spawn `agy` needlessly.
+const MODEL_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 // `aisdk:` + an absolute `file://` URL to our own factory module, resolved
 // relative to this file so it works both from `src/plugin.ts` (local dev,
@@ -124,6 +133,29 @@ export const setup: Plugin.Plugin["setup"] = async (ctx) => {
   })
 
   const providerID = Provider.ID.make(PROVIDER_ID)
+
+  // `agy models` needs a runnable, authenticated agy, which may not exist
+  // yet the first time this plugin loads (before the user has connected).
+  // Start with the static catalog so `/models` shows something reasonable
+  // either way, then replace it with the live one the moment discovery
+  // succeeds — `ctx.provider.transform`'s callback must be synchronous, so
+  // the async discovery has to happen before it, in this mutable `source`
+  // a later `reload()` re-reads (see the "Transforms" section of the
+  // plugins guide).
+  const source: { models: ReturnType<typeof toModelInfoList> } = { models: toModelInfoList(providerID) }
+  const refreshModels = async (): Promise<void> => {
+    try {
+      const discovered = await discoverModels()
+      source.models = toModelInfoListFromDiscovered(discovered, providerID)
+    } catch {
+      // agy not installed/authenticated yet, or a transient failure —
+      // keep whatever catalog is already in place rather than blanking it.
+      return
+    }
+    await ctx.provider.reload()
+  }
+  await refreshModels()
+
   await ctx.provider.transform((editor) => {
     editor.add({
       info: {
@@ -138,9 +170,15 @@ export const setup: Plugin.Plugin["setup"] = async (ctx) => {
         integrationID: Integration.ID.make(PROVIDER_ID),
         package: AI_SDK_PACKAGE,
       },
-      models: toModelInfoList(providerID),
+      models: source.models,
     })
   })
+
+  // `unref()` so this background refresh never keeps the host process
+  // alive on its own (Node/Bun-compatible Timeout, not Bun's plain number
+  // overload, since a callback is passed).
+  const refreshTimer = setInterval(() => void refreshModels(), MODEL_REFRESH_INTERVAL_MS)
+  refreshTimer.unref?.()
 
   // Every model call re-checks both the integration connection and the
   // agy binary itself, mirroring V1's auth.loader guard (which ran on
@@ -174,4 +212,6 @@ export const setup: Plugin.Plugin["setup"] = async (ctx) => {
     },
     { providerID: PROVIDER_ID },
   )
+
+  return () => clearInterval(refreshTimer)
 }

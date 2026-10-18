@@ -58,6 +58,7 @@ function makeFakeCtx() {
         callback({ add: (input: ProviderAdd) => providerAdds.push(input) })
         return { dispose: async () => {} }
       },
+      reload: async () => {},
     },
     aisdk: {
       hook: async (
@@ -131,6 +132,10 @@ function installFakeAgy(home: string): string {
 let tmpHome: string
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "agy-plugin-"))
+  // setup() unconditionally calls agy at startup (model discovery), so
+  // every test needs isolation from a real agy on this machine by
+  // default, even ones that never call installFakeAgy() themselves.
+  fakeAgyHome(tmpHome)
 })
 afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true })

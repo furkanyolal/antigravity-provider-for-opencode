@@ -66,6 +66,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     This factory's `languageModel()` is a fallback; the actual model
     opencode uses comes from `src/plugin.ts`'s own `ctx.aisdk.hook`
     (`"language"`), which can also check the live integration connection.
+  - `src/model-discovery.ts` (new) + `src/plugin.ts`: the model catalog is
+    now discovered live via `agy models` (refreshed every 5 minutes, with
+    `ctx.provider.reload()`), not a hardcoded snapshot. `src/models.ts`'s
+    `MODEL_DEFS` is kept as curated metadata for known slugs and as the
+    pre-connect fallback catalog (before `agy` is installed/authenticated,
+    `agy models` can't run yet); `inferModelDef` gives any slug Google
+    ships after this list was last updated reasonable default capabilities
+    by family-prefix heuristics instead of failing to register it at all.
+    This was prompted by a real failure: a model shipped with this plugin
+    (`gemini-3.6-flash-high` etc.) stopped matching the slugs a newer
+    `agy` release actually accepts, so every chat turn against it failed
+    with agy's own "model not recognized" error.
+  - `src/language-model.ts`: `agy` is itself a full agentic CLI with its
+    own tool system (`run_command`, `write_to_file`, browser control, ...),
+    separate from opencode's. In headless `-p` mode it cannot show a
+    permission prompt, so whenever the underlying model decides to use one
+    of *agy's own* tools, agy auto-denies the action and reports
+    `status: "SUCCESS"` with an empty `response` — i.e. the turn silently
+    "succeeds" with nothing to show the user. `responseText()` now
+    surfaces agy's `denied_actions` as an explanatory message instead of
+    blank text. (Deliberately not fixed by adding `agy`'s own
+    `--dangerously-skip-permissions`: that would let the model execute
+    arbitrary commands/file writes unsupervised on every turn, which is a
+    security-posture change this plugin should not make unilaterally.)
   - Manually verified end-to-end against a running opencode V2 instance:
     the plugin loads, `antigravity/*` models appear in `/models` once
     connected, and a chat turn against `antigravity/gpt-oss-120b-medium`

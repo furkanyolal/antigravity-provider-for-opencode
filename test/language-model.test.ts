@@ -113,6 +113,37 @@ describe("runAgy", () => {
     }
   })
 
+  it("falls back to accumulated non-thinking step_update text_deltas when result.response is empty", async () => {
+    const spawnFn = fakeSpawn(
+      [
+        '{"event":"step_update","step_update":{"state":"DONE","step_type":"thinking","text_delta":"pondering... "}}\n',
+        '{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"Hello "}}\n',
+        '{"event":"step_update","step_update":{"state":"ACTIVE","step_type":"agent_response","text_delta":"ignored, not DONE"}}\n',
+        '{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","text_delta":"world."}}\n',
+        '{"event":"result","result":{"status":"SUCCESS","response":"","usage":{"input_tokens":5,"output_tokens":3}}}\n',
+      ],
+      "",
+      0,
+    )
+    const result = await runAgy({ binary: "/x", prompt: "hi", slug: "gemini-3.1-pro-high", spawnFn })
+    expect(result.response).toBe("Hello world.")
+  })
+
+  it("leaves result.response as-is (empty) when there are no DONE, non-thinking text_deltas to fall back on", async () => {
+    const spawnFn = fakeSpawn(
+      [
+        '{"event":"step_update","step_update":{"state":"DONE","step_type":"agent_response","usage":{"output_tokens":292}}}\n',
+        '{"event":"step_update","step_update":{"state":"ACTIVE","step_type":"tool","tool_name":"run_command"}}\n',
+        '{"event":"result","result":{"status":"SUCCESS","response":"","denied_actions":[{"action":"command","display_name":"RunCommand"}]}}\n',
+      ],
+      "",
+      0,
+    )
+    const result = await runAgy({ binary: "/x", prompt: "hi", slug: "gemini-3.1-pro-high", spawnFn })
+    expect(result.response).toBe("")
+    expect(result.denied_actions).toEqual([{ action: "command", display_name: "RunCommand" }])
+  })
+
   it("kills the child when the abort signal fires", async () => {
     let killedWith: NodeJS.Signals | undefined
     const spawnFn: SpawnFn = () => {
@@ -199,6 +230,29 @@ describe("createAntigravityLanguageModel", () => {
       )
     })
 
+    it("surfaces agy's denied_actions as an explanatory message instead of blank text", async () => {
+      // `agy` is its own agentic CLI with its own tool system; in headless
+      // `-p` mode it auto-denies any tool-permission request and reports
+      // SUCCESS with an empty response and `denied_actions` populated.
+      const spawnFn = fakeSpawn(
+        [
+          '{"event":"result","result":{"status":"SUCCESS","response":"","usage":{"input_tokens":10,"output_tokens":5},"denied_actions":[{"action":"command","display_name":"RunCommand"}]}}\n',
+        ],
+        "",
+        0,
+      )
+      const model = createAntigravityLanguageModel({
+        modelID: "gemini-3.1-pro-high",
+        resolveBinary: async () => "/x",
+        spawnFn,
+      })
+      const result = await model.doGenerate({ prompt: textPrompt("hi") } as LanguageModelV3CallOptions)
+      const text = (result.content[0] as { text: string }).text
+      expect(text.length).toBeGreaterThan(0)
+      expect(text).toContain("RunCommand")
+      expect(text).toContain("headless")
+    })
+
     it("flattens a multi-message prompt to a single joined text string sent to agy", async () => {
       const captured: { args?: readonly string[] } = {}
       const spawnFn = fakeSpawn([SUCCESS_LINE], "", 0, captured)
@@ -235,6 +289,26 @@ describe("createAntigravityLanguageModel", () => {
       expect(delta.delta).toBe("Hello world, this is the complete answer.")
       const finish = parts.find((p) => p.type === "finish") as { finishReason: { unified: string } }
       expect(finish.finishReason.unified).toBe("stop")
+    })
+
+    it("surfaces agy's denied_actions as an explanatory text-delta instead of blank text", async () => {
+      const spawnFn = fakeSpawn(
+        [
+          '{"event":"result","result":{"status":"SUCCESS","response":"","usage":{"input_tokens":10,"output_tokens":5},"denied_actions":[{"action":"command","display_name":"RunCommand"}]}}\n',
+        ],
+        "",
+        0,
+      )
+      const model = createAntigravityLanguageModel({
+        modelID: "gemini-3.1-pro-high",
+        resolveBinary: async () => "/x",
+        spawnFn,
+      })
+      const { stream } = await model.doStream({ prompt: textPrompt("hi") } as LanguageModelV3CallOptions)
+      const parts = await collectStream(stream)
+      expect(parts.map((p) => p.type)).toEqual(["stream-start", "text-start", "text-delta", "text-end", "finish"])
+      const delta = parts.find((p) => p.type === "text-delta") as { delta: string }
+      expect(delta.delta).toContain("RunCommand")
     })
 
     it("emits an error stream part on non-SUCCESS status instead of throwing", async () => {
