@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { Provider } from "@opencode/plugin"
 import { PROVIDER_ID } from "../src/constants.js"
-import { MODEL_DEFS, MODEL_SLUGS, AI_SDK_PACKAGE, toModelInfoList } from "../src/models.js"
+import { MODEL_DEFS, MODEL_SLUGS, toModelInfoList } from "../src/models.js"
 
 const providerID = Provider.ID.make(PROVIDER_ID)
 
@@ -108,8 +108,3 @@ describe("toModelInfoList", () => {
   })
 })
 
-describe("AI_SDK_PACKAGE", () => {
-  it("is an aisdk:-prefixed symbolic specifier, never a resolvable module path", () => {
-    expect(AI_SDK_PACKAGE.startsWith("aisdk:")).toBe(true)
-  })
-})

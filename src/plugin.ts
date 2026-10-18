@@ -6,15 +6,25 @@
 //   2. An "antigravity" provider carrying the 6 Antigravity models,
 //      gated on that integration having an active connection
 //      (`activation: "auto"` + `integrationID`) — the V2 replacement for
-//      V1's `provider.models` hook.
-//   3. `ctx.aisdk.hook("sdk"/"language", ...)`, scoped to the
-//      "antigravity" provider, which hands opencode a `LanguageModelV3`
-//      whose `doGenerate`/`doStream` spawn `agy` directly. This is the V2
-//      replacement for V1's `auth.loader` fetch override: unlike V1 (which
-//      had to hijack the built-in "google" provider's `fetch` because it
-//      could not register a new BUNDLED_PROVIDERS entry), V2 lets a plugin
-//      register its own provider and its own model implementation, so no
-//      HTTP request of any kind is made — see language-model.ts.
+//      V1's `provider.models` hook. Its `package` points (via a `file://`
+//      URL resolved from this module's own location, so it works whether
+//      the plugin runs from source or from a built `dist/`) at
+//      ai-sdk-factory.ts: opencode's built-in `opencode.provider.dynamic`
+//      plugin registers an *unscoped* `ctx.aisdk.hook("sdk", ...)` that
+//      unconditionally tries to import any `aisdk:`-prefixed package and
+//      dies (aborting every other plugin's hooks in the same chain, not
+//      just its own) if that import fails — so the package must resolve to
+//      a real module, not a symbolic placeholder.
+//   3. `ctx.aisdk.hook("language", ...)`, scoped to the "antigravity"
+//      provider, which overrides the model opencode gets with one whose
+//      `resolveBinary` also checks the live integration connection (the
+//      factory's own fallback can't: it has no access to `ctx`). This is
+//      the V2 replacement for V1's `auth.loader` fetch override: unlike V1
+//      (which had to hijack the built-in "google" provider's `fetch`
+//      because it could not register a new BUNDLED_PROVIDERS entry), V2
+//      lets a plugin register its own provider and its own model
+//      implementation, so no HTTP request of any kind is made — see
+//      language-model.ts.
 //
 // Every connect method is backed by `preflight()`/`install()` from cli.ts
 // and install.ts, unchanged from V1: those modules only talk to the `agy`
@@ -26,9 +36,15 @@ import { Credential, Integration, Provider } from "@opencode/plugin"
 import { preflight } from "./cli.js"
 import { install, installInstructionsForPlatform } from "./install.js"
 import { createAntigravityLanguageModel } from "./language-model.js"
-import { toModelInfoList, AI_SDK_PACKAGE } from "./models.js"
+import { toModelInfoList } from "./models.js"
 import { AgyAuthMissingError, AgyNotInstalledError } from "./errors.js"
 import { PROVIDER_ID, PROVIDER_NAME } from "./constants.js"
+
+// `aisdk:` + an absolute `file://` URL to our own factory module, resolved
+// relative to this file so it works both from `src/plugin.ts` (local dev,
+// Bun transpiles TS on the fly) and from the built `dist/plugin.js` (the
+// published package, where the sibling `.js` is the real compiled file).
+const AI_SDK_PACKAGE = `aisdk:${new URL("./ai-sdk-factory.js", import.meta.url).href}`
 
 // Dummy placeholder: the real OAuth session lives entirely inside `agy`'s
 // own OS-keyring-backed session, never in opencode's credential store (see
@@ -147,17 +163,6 @@ export const setup: Plugin.Plugin["setup"] = async (ctx) => {
       throw err
     }
   }
-
-  await ctx.aisdk.hook(
-    "sdk",
-    (evt) => {
-      // The "sdk" step only needs to produce a truthy value; the real
-      // model implementation is supplied by the "language" hook below, so
-      // this object is never actually used.
-      evt.sdk = {}
-    },
-    { providerID: PROVIDER_ID },
-  )
 
   await ctx.aisdk.hook(
     "language",

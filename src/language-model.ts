@@ -22,7 +22,8 @@ import type {
 
 import { defaultSpawn, type SpawnedProcess, type SpawnFn } from "./spawn.js"
 import { subscriptionOnlyEnv } from "./env.js"
-import { AgyParseError, AgySpawnError } from "./errors.js"
+import { preflight } from "./cli.js"
+import { AgyNotInstalledError, AgyParseError, AgySpawnError } from "./errors.js"
 import { PROVIDER_ID } from "./constants.js"
 import type { ModelSlug } from "./types.js"
 
@@ -185,14 +186,37 @@ function resultError(result: AgyResult): Error {
   return new Error(result.error ?? `agy status: ${result.status}`)
 }
 
+// Re-runs `preflight()` on every call, mirroring V1's `auth.loader` guard
+// (which ran on every chat request, not just once at plugin load). The
+// factory module (ai-sdk-factory.ts) has no access to the plugin's `ctx`,
+// so unlike plugin.ts's own `ctx.aisdk.hook("language", ...)` override this
+// default cannot also check the live integration connection; the provider's
+// `activation: "auto"` + `integrationID` catalog gating (see plugin.ts)
+// already keeps the model out of the picker before any connection exists.
+export async function defaultResolveBinary(): Promise<string> {
+  try {
+    const ok = await preflight()
+    return ok.binary
+  } catch (err) {
+    if (err instanceof AgyNotInstalledError) {
+      throw new AgyNotInstalledError(
+        err.platform,
+        `${err.message}\n\nAntigravity auth is configured but the binary is missing. Use "Install Antigravity CLI" above to reinstall.`,
+      )
+    }
+    throw err
+  }
+}
+
 export type CreateLanguageModelOptions = {
   modelID: ModelSlug
-  /** Resolves the agy binary path, verifying auth + install state on every call. */
-  resolveBinary: () => Promise<string>
+  /** Resolves the agy binary path, verifying auth + install state on every call. Defaults to `defaultResolveBinary`. */
+  resolveBinary?: () => Promise<string>
   spawnFn?: SpawnFn
 }
 
 export function createAntigravityLanguageModel(opts: CreateLanguageModelOptions): LanguageModelV3 {
+  const resolveBinary = opts.resolveBinary ?? defaultResolveBinary
   return {
     specificationVersion: "v3",
     provider: PROVIDER_ID,
@@ -202,7 +226,7 @@ export function createAntigravityLanguageModel(opts: CreateLanguageModelOptions)
     supportedUrls: {},
 
     async doGenerate(options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
-      const binary = await opts.resolveBinary()
+      const binary = await resolveBinary()
       const prompt = promptToText(options.prompt)
       const result = await runAgy({
         binary,
@@ -221,7 +245,7 @@ export function createAntigravityLanguageModel(opts: CreateLanguageModelOptions)
     },
 
     async doStream(options: LanguageModelV3CallOptions) {
-      const binary = await opts.resolveBinary()
+      const binary = await resolveBinary()
       const prompt = promptToText(options.prompt)
       let child: SpawnedProcess | undefined
 

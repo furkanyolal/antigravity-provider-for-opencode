@@ -202,14 +202,26 @@ describe("setup", () => {
     expect(added!.info.id).toBe(PROVIDER_ID)
     expect(added!.info.activation).toBe("auto")
     expect(added!.info.integrationID).toBe(PROVIDER_ID)
-    expect(added!.info.package.startsWith("aisdk:")).toBe(true)
     expect(added!.models).toHaveLength(7)
   })
 
-  it("registers aisdk 'sdk' and 'language' hooks scoped to the antigravity provider", async () => {
+  it("points package at a real, importable aisdk: file:// factory module, not a symbolic placeholder", async () => {
+    // opencode's built-in opencode.provider.dynamic plugin unconditionally
+    // tries to import any aisdk:-prefixed package and dies (aborting every
+    // plugin's hooks sharing that event chain, not just its own) if the
+    // import fails — so this must resolve to a real file.
+    const { ctx, providerAdds } = makeFakeCtx()
+    await setup(ctx as never)
+    const pkg = providerAdds[0]!.info.package
+    expect(pkg.startsWith("aisdk:file://")).toBe(true)
+    const fileURL = pkg.slice("aisdk:".length)
+    expect(fs.existsSync(new URL(fileURL.replace(/\.js$/, ".ts")))).toBe(true)
+  })
+
+  it("registers an aisdk 'language' hook scoped to the antigravity provider", async () => {
     const { ctx, aisdkHooks } = makeFakeCtx()
     await setup(ctx as never)
-    expect(aisdkHooks.map((h) => h.name).toSorted()).toEqual(["language", "sdk"])
+    expect(aisdkHooks.map((h) => h.name)).toEqual(["language"])
     for (const hook of aisdkHooks) expect(hook.options?.providerID).toBe(PROVIDER_ID)
   })
 

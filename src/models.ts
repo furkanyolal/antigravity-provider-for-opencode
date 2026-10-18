@@ -92,12 +92,6 @@ export const MODEL_DEFS: readonly ModelDef[] = [
 
 export const MODEL_SLUGS: readonly ModelSlug[] = MODEL_DEFS.map((def) => def.slug)
 
-// `aisdk:` marks this as a generic AI-SDK-shaped provider route (see
-// plugin.ts): the resolver never tries to import this specifier as a real
-// module, because our own `ctx.aisdk.hook("sdk"/"language", ...)` handlers
-// intercept both steps before any package resolution happens.
-export const AI_SDK_PACKAGE = "aisdk:antigravity-cli"
-
 function toModelInfo(def: ModelDef, providerID: Provider.ID): Model.Info {
   const id = Model.ID.make(def.slug)
   return {

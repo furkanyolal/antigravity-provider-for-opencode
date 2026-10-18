@@ -26,6 +26,9 @@
     "subscription"
   ],
   "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "scripts": {
     "typecheck": "bash script/typecheck.sh",
     "test": "bun test",

@@ -48,6 +48,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `@opencode/plugin`. `@ai-sdk/provider` is unchanged (its `3.x` line
     already ships the `LanguageModelV3` types `@opencode/plugin@2.x`
     itself depends on).
+  - `index.ts` (repo root) + `package.json`'s new `exports` field: opencode
+    resolves a *local, unnamed* plugin directory (a bare path or `file://`
+    config entry, as opposed to an installed, named npm package) to
+    `<directory>/index`, bypassing `package.json`'s `main`/`exports`
+    entirely for that resolution path. `index.ts` re-exports `src/index.ts`
+    so the plugin loads correctly both as a local directory and as an
+    installed package.
+  - `src/ai-sdk-factory.ts`: `AI_SDK_PACKAGE` (in `src/plugin.ts`, computed
+    from `import.meta.url`) points at this real, importable factory module
+    instead of a symbolic placeholder string. opencode's built-in
+    `opencode.provider.dynamic` plugin registers an *unscoped*
+    `ctx.aisdk.hook("sdk", ...)` that unconditionally tries to import
+    *any* `aisdk:`-prefixed provider package and dies — aborting every
+    plugin's hooks sharing that event chain, not just its own — if the
+    import fails, so the package string must resolve to a real module.
+    This factory's `languageModel()` is a fallback; the actual model
+    opencode uses comes from `src/plugin.ts`'s own `ctx.aisdk.hook`
+    (`"language"`), which can also check the live integration connection.
+  - Manually verified end-to-end against a running opencode V2 instance:
+    the plugin loads, `antigravity/*` models appear in `/models` once
+    connected, and a chat turn against `antigravity/gpt-oss-120b-medium`
+    streams a real response through `agy`. The plugin's own hardcoded
+    model catalog (`src/models.ts`) is the one documented in README.md
+    and matches the slugs this port is scoped to preserve from V1; a
+    currently-installed `agy` build may report a different, newer catalog
+    (observed during manual testing: `agy models` returned slugs like
+    `gemini-4-argon-medium` and `claude-opus-5-5-high` instead of this
+    plugin's `gemini-3.6-flash-high`/`claude-opus-4-6`). That drift is
+    pre-existing upstream catalog churn, not something this port
+    introduced or is scoped to chase.
 
 ### Fixed
 - **NDJSON trailing partial line drop** — `agy` 1.1.x sometimes emits the final
